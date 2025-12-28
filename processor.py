@@ -12,7 +12,9 @@ RE_MULTI_NEWLINE = re.compile(r'\n{3,}')
 RE_ENGLISH_CHAR = re.compile(r'[a-zA-Z]')
 RE_STATUS_DATE = re.compile(r'Date\s*:\s*([^|\]]+)', re.IGNORECASE)
 RE_STATUS_TIME = re.compile(r'Time\s*:\s*([^|\]]+)', re.IGNORECASE)
-RE_IMG_TAG = re.compile(r'<img=["\'](.*?)["\']>')
+
+# [V66 수정] 이미지 태그 감지 강화 (어떤 형태든 <img ... > 패턴은 무조건 잡음)
+RE_IMG_TAG_ALL = re.compile(r'<img[^>]+>') 
 
 # 시스템 메시지
 RE_SYS_MSG = re.compile(r'^-\s*System Message:\s*(.*)', re.MULTILINE)
@@ -165,17 +167,23 @@ def format_novel_content(text):
     for k, v in replacements.items():
         text = text.replace(k, v)
 
-    # 3. [중요] 구조적 태그 보호 (Protect Structural Tags FIRST)
-    # 이미지, 상태창 등 HTML 태그가 포함된 요소들을 먼저 보호하여
-    # 이후 텍스트 스타일링 로직(대화/속마음)이 건드리지 못하게 함.
+    # 3. [최우선 보호] 구조적 태그 보호 (Protect Structural Tags FIRST)
     protected_map = {}
     def protect_content(content):
         key = f"__KVIEWER_PROTECTED_{uuid.uuid4().hex}__"
         protected_map[key] = content
         return key
 
-    # (1) 이미지 태그 보호
-    text = RE_IMG_TAG.sub(lambda m: protect_content(f"<div class='novel-img-placeholder'>🖼️ [Image] {m.group(1)}</div>"), text)
+    # [V66 Fix] 이미지 태그 완벽 보호
+    # 정규식으로 <img ... > 전체를 잡고, 그 안에서 파일명만 안전하게 추출
+    def repl_img_tag_safe(match):
+        full_tag = match.group(0)
+        # 태그 안에서 따옴표로 감싸진 부분(파일명) 추출 시도
+        file_match = re.search(r'[\'"]([^\'"]+)[\'"]', full_tag)
+        filename = file_match.group(1) if file_match else "이미지"
+        return protect_content(f"<div class='novel-img-placeholder'>🖼️ [Image] {filename}</div>")
+    
+    text = RE_IMG_TAG_ALL.sub(repl_img_tag_safe, text)
 
     # (2) 상태창 보호
     def convert_status_content(raw_content):
@@ -206,7 +214,7 @@ def format_novel_content(text):
         return protect_content(f"<div class='system-msg'>🔔 System: {content}</div>")
     text = RE_SYS_MSG.sub(repl_sys_msg_wrapper, text)
 
-    # 4. 텍스트 스타일링 (이제 안전함!)
+    # 4. 텍스트 스타일링 (이제 이미지 태그는 보호되었으므로 안전함)
     # (1) 대화문 마킹
     text = RE_QUOTE_DOUBLE.sub(r'﹇DIA_S﹈\1﹇DIA_E﹈', text)
     
@@ -216,7 +224,6 @@ def format_novel_content(text):
         stripped = content.strip()
         if not stripped: return f"'{content}'"
         
-        # 15자 이상이거나 문장부호가 있으면 '속마음'
         is_thought = (len(stripped) >= 15) or (stripped[-1] in ['.', '?', '!', '…', '~'])
         
         if is_thought:
