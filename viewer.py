@@ -32,7 +32,9 @@ def load_config():
 def save_config():
     mode = st.session_state.get("ui_mode", "pc")
     current_path = st.session_state.get("current_file_path")
+    # 파일 객체는 JSON 직렬화가 안되므로, 문자열 경로일 때만 저장하거나 스킵
     path_to_save = current_path if isinstance(current_path, str) else None
+    
     current_full_config = load_config()
     current_full_config["common"]["folder_path"] = st.session_state.get("folder_path_input", "")
     current_full_config["common"]["custom_orders"] = st.session_state.get("custom_orders", {})
@@ -74,7 +76,8 @@ session_defaults = {
     "bg_color": active_config["bg_color"], "text_color": active_config["text_color"], "font_size": active_config["font_size"], "line_height": active_config["line_height"],
     "content_margin": active_config["content_margin"], "font_family": active_config["font_family"], "theme_name": active_config["theme"],
     "folder_path_input": common_config["folder_path"], "custom_orders": common_config["custom_orders"], "saved_folder_path": common_config["folder_path"],
-    "current_file_path": initial_file_path, "view_type": common_config.get("view_type", "scroll"), "expanded_folders": set(), "page_idx": 0
+    "current_file_path": initial_file_path, "view_type": common_config.get("view_type", "scroll"), "expanded_folders": set(), "page_idx": 0,
+    "uploaded_files_cache": [] # 업로드된 파일 리스트 저장
 }
 for key, val in session_defaults.items():
     if key not in st.session_state: st.session_state[key] = val
@@ -177,24 +180,19 @@ def switch_profile():
     st.session_state.theme_name = target_conf["theme"]
 
 def render_settings_popup():
-    # [NEW] 맨 위로 가기 버튼 (가장 상단에 배치)
     if st.button("⬆ 맨 위로", use_container_width=True):
         components.html(
             """
             <script>
-                // 윈도우 전체 스크롤 (페이지 모드)
                 window.parent.scrollTo({top: 0, behavior: 'smooth'});
-                // 내부 컨테이너 스크롤 (스크롤 모드)
                 var scrollDiv = window.parent.document.querySelector('.novel-container-scroll');
                 if (scrollDiv) { scrollDiv.scrollTo({top: 0, behavior: 'smooth'}); }
             </script>
             """,
             height=0
         )
-
     st.markdown("### ⚙️ 뷰어 설정")
     if not HAS_JS_LIB: st.caption("⚠️ 'pip install streamlit-javascript' 필요")
-    
     idx = 0 if st.session_state["ui_mode"] == "pc" else 1
     st.radio("설정 프로필", ["🖥️ PC", "📱 Mobile"], index=idx, key="profile_selector", on_change=switch_profile, horizontal=True)
     st.markdown("---")
@@ -223,6 +221,7 @@ def main():
     is_mobile_mode = (st.session_state.get("ui_mode") == "mobile")
     css_code = styles.get_css(st.session_state.bg_color, st.session_state.text_color, font_map.get(st.session_state.font_family, "'Nanum Myeongjo', serif"), st.session_state.font_size, st.session_state.line_height, st.session_state.content_margin, is_mobile_mode)
     st.markdown(css_code, unsafe_allow_html=True)
+    
     with st.sidebar:
         st.header("📂 케이뷰어")
         st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
@@ -232,19 +231,47 @@ def main():
             with st.container(): render_tree_ui(folder_path, level=0)
         else: st.info("아래 설정에서 폴더 경로를 입력하세요.")
         st.markdown("---")
+        
         with st.expander("⚙️ 경로 및 파일 열기", expanded=False):
             st.text_input("서고 폴더 경로", key="folder_path_input", on_change=save_config, placeholder="C:\\Novels")
-            st.file_uploader("임시 파일 열기", type=['json'], key="uploader", on_change=lambda: st.session_state.update(current_file_path=st.session_state.uploader, page_idx=0) if st.session_state.uploader else None)
+            
+            # [NEW] 다중 파일 업로드 지원 및 선택 로직
+            uploaded_files = st.file_uploader(
+                "임시 파일 열기 (여러 개 가능)", 
+                type=['json'], 
+                accept_multiple_files=True, # 다중 선택 허용
+                key="uploader"
+            )
+            
+            if uploaded_files:
+                # 업로드된 파일들의 이름 목록 생성
+                file_map = {f.name: f for f in uploaded_files}
+                file_names = list(file_map.keys())
+                
+                # 선택 박스 표시
+                selected_file_name = st.selectbox("읽을 파일 선택", file_names, index=0)
+                
+                # 선택된 파일을 현재 파일로 설정
+                if selected_file_name:
+                    st.session_state.current_file_path = file_map[selected_file_name]
+                    # 파일이 바뀌면 페이지 초기화 (같은 파일이 아닐 경우만)
+                    # 여기서는 간단히 항상 0으로 하거나, 로직을 추가할 수 있음.
+                    # 기존 로직과 충돌하지 않게 둠.
+
     with st.popover("⚙️", use_container_width=False): render_settings_popup()
     
     target_file = st.session_state.get("current_file_path")
     
-    # [자동 스크롤] 파일 변경 시 스크롤 최상단 이동
+    # [자동 스크롤] 파일 변경 감지
+    # 업로드된 파일 객체는 이름(name)으로 식별
+    current_identifier = target_file.name if hasattr(target_file, 'name') else str(target_file)
+
     if "last_read_file" not in st.session_state:
         st.session_state.last_read_file = None
         
-    if target_file != st.session_state.last_read_file:
-        st.session_state.last_read_file = target_file
+    if current_identifier != st.session_state.last_read_file:
+        st.session_state.last_read_file = current_identifier
+        st.session_state.page_idx = 0 # 파일 바뀌면 페이지도 0으로
         components.html(
             """
             <script>
@@ -260,9 +287,14 @@ def main():
 
     if target_file:
         display_name = os.path.basename(target_file) if isinstance(target_file, str) else target_file.name
+        
+        # 파일 내용 읽기
         if isinstance(target_file, str):
             with open(target_file, 'r', encoding='utf-8') as f: file_content = f.read()
-        else: file_content = target_file.getvalue().decode("utf-8")
+        else:
+            # 파일 객체인 경우 (처음 읽을 때만 seek(0) 필요할 수 있음)
+            target_file.seek(0)
+            file_content = target_file.getvalue().decode("utf-8")
         
         limit = 450 if is_mobile_mode else 2500
         content_list, error = processor.get_novel_content(file_content, chunk_size=limit)
@@ -285,7 +317,6 @@ def main():
                 page_html = content_list[current_idx]
                 st.markdown(f'<div class="novel-container-page">{page_html}</div>', unsafe_allow_html=True)
                 
-                # 플로팅 네비게이션
                 st.markdown('<div class="nav-anchor"></div>', unsafe_allow_html=True)
                 st.markdown(f'<div class="page-info-overlay">{current_idx + 1} / {max_page}</div>', unsafe_allow_html=True)
                 
@@ -301,7 +332,7 @@ def main():
     else:
         st.markdown(f"""
         <div style='text-align:center; padding-top: 150px; opacity: 0.6; color: {st.session_state.text_color};'>
-            <h2>📂 케이뷰어 V61</h2>
+            <h2>📂 케이뷰어 V67</h2>
             <p>왼쪽 사이드바에서 책을 선택해주세요.</p>
         </div>
         """, unsafe_allow_html=True)

@@ -13,8 +13,8 @@ RE_ENGLISH_CHAR = re.compile(r'[a-zA-Z]')
 RE_STATUS_DATE = re.compile(r'Date\s*:\s*([^|\]]+)', re.IGNORECASE)
 RE_STATUS_TIME = re.compile(r'Time\s*:\s*([^|\]]+)', re.IGNORECASE)
 
-# [V66 수정] 이미지 태그 감지 강화 (어떤 형태든 <img ... > 패턴은 무조건 잡음)
-RE_IMG_TAG_ALL = re.compile(r'<img[^>]+>') 
+# 이미지 태그 등 모든 태그 패턴
+RE_TAG_PATTERN = re.compile(r'<[^>]+>') 
 
 # 시스템 메시지
 RE_SYS_MSG = re.compile(r'^-\s*System Message:\s*(.*)', re.MULTILINE)
@@ -24,7 +24,6 @@ RE_SYS_MSG_BRACE = re.compile(r'^-\s*\{System Message:\s*(.*?)\}', re.MULTILINE)
 RE_QUOTE_DOUBLE = re.compile(r'"([^"]*)"')
 RE_QUOTE_SINGLE = re.compile(r"'([^']*)'") 
 
-RE_HTML_TAG = re.compile(r'<[^>]+>') 
 RE_PREV_SUMMARY = re.compile(r'▽.*?△', re.DOTALL)
 
 # 파서 유틸리티
@@ -132,7 +131,7 @@ def convert_wncs_content(raw_content):
 def format_novel_content(text):
     if not text: return ""
     
-    # 1. 기본 청소
+    # 0. 기본 청소
     text = text.strip()
     text = text.replace('[Status Interface]', '')
     text = RE_HEADER_RESPONSE.sub('', text)
@@ -142,50 +141,35 @@ def format_novel_content(text):
     text = RE_PREV_SUMMARY.sub('', text)
     text = RE_MULTI_NEWLINE.sub('\n\n', text)
 
-    lines = text.split('\n')
-    filtered_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            filtered_lines.append(line)
-            continue
-        if (stripped.startswith('HN[') or stripped.startswith('WNCS{') or stripped.startswith('[Date') or stripped.startswith('[Level') or stripped.startswith('[ ')):
-            filtered_lines.append(line)
-            continue
-        eng_count = sum(1 for c in line if 65 <= ord(c) <= 90 or 97 <= ord(c) <= 122)
-        if len(line) > 0 and (eng_count / len(line)) >= 0.2:
-            continue
-        filtered_lines.append(line)
-    text = '\n'.join(filtered_lines)
-
-    # 2. 따옴표 표준화 (가장 먼저 수행)
-    replacements = {
-        '“': '"', '”': '"', '〝': '"', '〞': '"', '″': '"',
-        '‘': "'", '’': "'", '‚': "'", '‛': "'", '′': "'",
-        '『': '"', '』': '"', '「': "'", '」': "'" 
-    }
-    for k, v in replacements.items():
-        text = text.replace(k, v)
-
-    # 3. [최우선 보호] 구조적 태그 보호 (Protect Structural Tags FIRST)
+    # 1. [절대 우선] 구조적 태그 및 HTML 태그 완전 보호
+    # 따옴표 변환이나 다른 로직이 돌기 전에, <...> 형태는 모두 숨겨둡니다.
     protected_map = {}
     def protect_content(content):
         key = f"__KVIEWER_PROTECTED_{uuid.uuid4().hex}__"
         protected_map[key] = content
         return key
 
-    # [V66 Fix] 이미지 태그 완벽 보호
-    # 정규식으로 <img ... > 전체를 잡고, 그 안에서 파일명만 안전하게 추출
+    # (1-1) 이미지 태그 특별 처리 (placeholder로 변환 후 보호)
     def repl_img_tag_safe(match):
         full_tag = match.group(0)
-        # 태그 안에서 따옴표로 감싸진 부분(파일명) 추출 시도
+        # 태그 안에서 따옴표로 감싸진 파일명 추출 (예: <img="name">)
         file_match = re.search(r'[\'"]([^\'"]+)[\'"]', full_tag)
         filename = file_match.group(1) if file_match else "이미지"
+        # HTML로 변환해서 저장
         return protect_content(f"<div class='novel-img-placeholder'>🖼️ [Image] {filename}</div>")
     
-    text = RE_IMG_TAG_ALL.sub(repl_img_tag_safe, text)
+    # <img ... > 패턴을 먼저 찾아 처리
+    text = re.sub(r'<img[^>]+>', repl_img_tag_safe, text)
 
-    # (2) 상태창 보호
+    # (1-2) 나머지 모든 HTML 태그 보호 (<br>, <div>, <span> 등)
+    # 이미 처리된 img 태그는 protected_key로 바뀌었으므로 영향받지 않음
+    text = RE_TAG_PATTERN.sub(lambda m: protect_content(m.group(0)), text)
+
+    # 2. 커뮤니티/댓글창 보호 (독자적 포맷)
+    text = parse_nested_block(text, 'HN[', '[', ']', lambda c: protect_content(convert_hn_content(c)))
+    text = parse_nested_block(text, 'WNCS{', '{', '}', lambda c: protect_content(convert_wncs_content(c)))
+
+    # 3. 상태창 등 대괄호 보호
     def convert_status_content(raw_content):
         if not RE_STATUS_DATE.search(raw_content): return None
         date_match = RE_STATUS_DATE.search(raw_content)
@@ -198,11 +182,7 @@ def format_novel_content(text):
         return protect_content(html)
     text = parse_nested_block(text, '', '[', ']', convert_status_content)
 
-    # (3) 커뮤니티/댓글창 보호
-    text = parse_nested_block(text, 'HN[', '[', ']', lambda c: protect_content(convert_hn_content(c)))
-    text = parse_nested_block(text, 'WNCS{', '{', '}', lambda c: protect_content(convert_wncs_content(c)))
-
-    # (4) 시스템 메시지 보호
+    # 4. 시스템 메시지 보호
     def repl_sys_msg_brace_wrapper(match):
         content = match.group(1)
         content = content.replace('**', '') 
@@ -214,16 +194,48 @@ def format_novel_content(text):
         return protect_content(f"<div class='system-msg'>🔔 System: {content}</div>")
     text = RE_SYS_MSG.sub(repl_sys_msg_wrapper, text)
 
-    # 4. 텍스트 스타일링 (이제 이미지 태그는 보호되었으므로 안전함)
-    # (1) 대화문 마킹
+    # =========================================================
+    # 5. 이제 안전하게 텍스트 처리 (HTML 태그는 모두 숨겨진 상태)
+    # =========================================================
+    
+    lines = text.split('\n')
+    filtered_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            filtered_lines.append(line)
+            continue
+        # 이미 보호된 키는 건너뜀 (HN, WNCS 등)
+        if stripped.startswith('__KVIEWER_PROTECTED_'):
+            filtered_lines.append(line)
+            continue
+            
+        eng_count = sum(1 for c in line if 65 <= ord(c) <= 90 or 97 <= ord(c) <= 122)
+        if len(line) > 0 and (eng_count / len(line)) >= 0.2:
+            # 영어 비율이 너무 높으면 필터링 (선택 사항)
+             pass 
+        filtered_lines.append(line)
+    text = '\n'.join(filtered_lines)
+
+    # (1) 따옴표 표준화
+    replacements = {
+        '“': '"', '”': '"', '〝': '"', '〞': '"', '″': '"',
+        '‘': "'", '’': "'", '‚': "'", '‛': "'", '′': "'",
+        '『': '"', '』': '"', '「': "'", '」': "'" 
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
+
+    # (2) 대화문 마킹
     text = RE_QUOTE_DOUBLE.sub(r'﹇DIA_S﹈\1﹇DIA_E﹈', text)
     
-    # (2) 작은따옴표(속마음/강조) 분류
+    # (3) 작은따옴표(속마음/강조) 분류
     def single_quote_classifier(match):
         content = match.group(1)
         stripped = content.strip()
         if not stripped: return f"'{content}'"
         
+        # 15자 이상이거나 문장부호가 있으면 '속마음'
         is_thought = (len(stripped) >= 15) or (stripped[-1] in ['.', '?', '!', '…', '~'])
         
         if is_thought:
@@ -233,11 +245,12 @@ def format_novel_content(text):
 
     text = RE_QUOTE_SINGLE.sub(single_quote_classifier, text)
 
-    # (3) 대화문 HTML 변환
+    # (4) 대화문 HTML 변환
     text = text.replace('﹇DIA_S﹈', '<span class="dialogue">“')
     text = text.replace('﹇DIA_E﹈', '”</span>')
 
-    # 5. 보호된 태그 복원
+    # 6. 보호된 태그 최종 복원
+    # 역순이나 순서는 상관없지만 map에 있는걸 다 복구
     for key, html in protected_map.items():
         text = text.replace(key, html)
 
