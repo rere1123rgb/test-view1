@@ -13,9 +13,15 @@ RE_ENGLISH_CHAR = re.compile(r'[a-zA-Z]')
 RE_STATUS_DATE = re.compile(r'Date\s*:\s*([^|\]]+)', re.IGNORECASE)
 RE_STATUS_TIME = re.compile(r'Time\s*:\s*([^|\]]+)', re.IGNORECASE)
 RE_IMG_TAG = re.compile(r'<img=["\'](.*?)["\']>')
+
+# 시스템 메시지
 RE_SYS_MSG = re.compile(r'^-\s*System Message:\s*(.*)', re.MULTILINE)
+RE_SYS_MSG_BRACE = re.compile(r'^-\s*\{System Message:\s*(.*?)\}', re.MULTILINE)
+
+# 따옴표 감지
 RE_QUOTE_DOUBLE = re.compile(r'"([^"]*)"')
-RE_QUOTE_SINGLE = re.compile(r"'([^']*)'")
+RE_QUOTE_SINGLE = re.compile(r"'([^']*)'") 
+
 RE_HTML_TAG = re.compile(r'<[^>]+>') 
 RE_PREV_SUMMARY = re.compile(r'▽.*?△', re.DOTALL)
 
@@ -124,6 +130,7 @@ def convert_wncs_content(raw_content):
 def format_novel_content(text):
     if not text: return ""
     
+    # 1. 기본 청소
     text = text.strip()
     text = text.replace('[Status Interface]', '')
     text = RE_HEADER_RESPONSE.sub('', text)
@@ -149,24 +156,28 @@ def format_novel_content(text):
         filtered_lines.append(line)
     text = '\n'.join(filtered_lines)
 
-    # 1. 따옴표 변환을 최우선으로 처리 (HTML 생성 전)
-    text = text.replace('“', '"').replace('”', '"').replace('‘', "'").replace('’', "'")
-    text = RE_QUOTE_DOUBLE.sub(r'﹇DIA_S﹈\1﹇DIA_E﹈', text)
-    text = RE_QUOTE_SINGLE.sub(r'﹇THO_S﹈\1﹇THO_E﹈', text)
-    text = text.replace('﹇DIA_S﹈', '<span class="dialogue">“')
-    text = text.replace('﹇DIA_E﹈', '”</span>')
-    text = text.replace('﹇THO_S﹈', '<span class="thought">‘')
-    text = text.replace('﹇THO_E﹈', '’</span>')
+    # 2. 따옴표 표준화 (가장 먼저 수행)
+    replacements = {
+        '“': '"', '”': '"', '〝': '"', '〞': '"', '″': '"',
+        '‘': "'", '’': "'", '‚': "'", '‛': "'", '′': "'",
+        '『': '"', '』': '"', '「': "'", '」': "'" 
+    }
+    for k, v in replacements.items():
+        text = text.replace(k, v)
 
+    # 3. [중요] 구조적 태그 보호 (Protect Structural Tags FIRST)
+    # 이미지, 상태창 등 HTML 태그가 포함된 요소들을 먼저 보호하여
+    # 이후 텍스트 스타일링 로직(대화/속마음)이 건드리지 못하게 함.
     protected_map = {}
     def protect_content(content):
         key = f"__KVIEWER_PROTECTED_{uuid.uuid4().hex}__"
         protected_map[key] = content
         return key
 
-    text = parse_nested_block(text, 'HN[', '[', ']', lambda c: protect_content(convert_hn_content(c)))
-    text = parse_nested_block(text, 'WNCS{', '{', '}', lambda c: protect_content(convert_wncs_content(c)))
+    # (1) 이미지 태그 보호
+    text = RE_IMG_TAG.sub(lambda m: protect_content(f"<div class='novel-img-placeholder'>🖼️ [Image] {m.group(1)}</div>"), text)
 
+    # (2) 상태창 보호
     def convert_status_content(raw_content):
         if not RE_STATUS_DATE.search(raw_content): return None
         date_match = RE_STATUS_DATE.search(raw_content)
@@ -175,19 +186,51 @@ def format_novel_content(text):
         if date_match: parts.append(f"📅 {date_match.group(1).strip()}")
         if time_match: parts.append(f"⏰ {time_match.group(1).strip()}")
         if not parts: return ""
-        # [수정] HTML 속성에 작은 따옴표 사용 (큰 따옴표 충돌 방지)
         html = f"<div class='novel-dateline'>{' &nbsp;|&nbsp; '.join(parts)}</div>"
         return protect_content(html)
-
     text = parse_nested_block(text, '', '[', ']', convert_status_content)
-    text = RE_IMG_TAG.sub(lambda m: protect_content(f"<div class='novel-img-placeholder'>🖼️ [Image] {m.group(1)}</div>"), text)
+
+    # (3) 커뮤니티/댓글창 보호
+    text = parse_nested_block(text, 'HN[', '[', ']', lambda c: protect_content(convert_hn_content(c)))
+    text = parse_nested_block(text, 'WNCS{', '{', '}', lambda c: protect_content(convert_wncs_content(c)))
+
+    # (4) 시스템 메시지 보호
+    def repl_sys_msg_brace_wrapper(match):
+        content = match.group(1)
+        content = content.replace('**', '') 
+        return protect_content(f"<div class='system-msg'>🔔 System: {content}</div>")
+    text = RE_SYS_MSG_BRACE.sub(repl_sys_msg_brace_wrapper, text)
 
     def repl_sys_msg_wrapper(match):
         content = match.group(1)
         return protect_content(f"<div class='system-msg'>🔔 System: {content}</div>")
     text = RE_SYS_MSG.sub(repl_sys_msg_wrapper, text)
 
-    # HTML 복원
+    # 4. 텍스트 스타일링 (이제 안전함!)
+    # (1) 대화문 마킹
+    text = RE_QUOTE_DOUBLE.sub(r'﹇DIA_S﹈\1﹇DIA_E﹈', text)
+    
+    # (2) 작은따옴표(속마음/강조) 분류
+    def single_quote_classifier(match):
+        content = match.group(1)
+        stripped = content.strip()
+        if not stripped: return f"'{content}'"
+        
+        # 15자 이상이거나 문장부호가 있으면 '속마음'
+        is_thought = (len(stripped) >= 15) or (stripped[-1] in ['.', '?', '!', '…', '~'])
+        
+        if is_thought:
+            return f'<span class="thought">‘{content}’</span>'
+        else:
+            return f'<span class="emphasis">‘{content}’</span>'
+
+    text = RE_QUOTE_SINGLE.sub(single_quote_classifier, text)
+
+    # (3) 대화문 HTML 변환
+    text = text.replace('﹇DIA_S﹈', '<span class="dialogue">“')
+    text = text.replace('﹇DIA_E﹈', '”</span>')
+
+    # 5. 보호된 태그 복원
     for key, html in protected_map.items():
         text = text.replace(key, html)
 

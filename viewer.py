@@ -4,6 +4,7 @@ import re
 import os
 import styles
 import processor
+import streamlit.components.v1 as components
 
 try:
     from streamlit_javascript import st_javascript
@@ -176,8 +177,24 @@ def switch_profile():
     st.session_state.theme_name = target_conf["theme"]
 
 def render_settings_popup():
+    # [NEW] 맨 위로 가기 버튼 (가장 상단에 배치)
+    if st.button("⬆ 맨 위로", use_container_width=True):
+        components.html(
+            """
+            <script>
+                // 윈도우 전체 스크롤 (페이지 모드)
+                window.parent.scrollTo({top: 0, behavior: 'smooth'});
+                // 내부 컨테이너 스크롤 (스크롤 모드)
+                var scrollDiv = window.parent.document.querySelector('.novel-container-scroll');
+                if (scrollDiv) { scrollDiv.scrollTo({top: 0, behavior: 'smooth'}); }
+            </script>
+            """,
+            height=0
+        )
+
     st.markdown("### ⚙️ 뷰어 설정")
     if not HAS_JS_LIB: st.caption("⚠️ 'pip install streamlit-javascript' 필요")
+    
     idx = 0 if st.session_state["ui_mode"] == "pc" else 1
     st.radio("설정 프로필", ["🖥️ PC", "📱 Mobile"], index=idx, key="profile_selector", on_change=switch_profile, horizontal=True)
     st.markdown("---")
@@ -221,6 +238,26 @@ def main():
     with st.popover("⚙️", use_container_width=False): render_settings_popup()
     
     target_file = st.session_state.get("current_file_path")
+    
+    # [자동 스크롤] 파일 변경 시 스크롤 최상단 이동
+    if "last_read_file" not in st.session_state:
+        st.session_state.last_read_file = None
+        
+    if target_file != st.session_state.last_read_file:
+        st.session_state.last_read_file = target_file
+        components.html(
+            """
+            <script>
+                try {
+                    window.parent.scrollTo({top: 0, behavior: 'instant'});
+                    var scrollDiv = window.parent.document.querySelector('.novel-container-scroll');
+                    if (scrollDiv) { scrollDiv.scrollTop = 0; }
+                } catch(e) { console.log(e); }
+            </script>
+            """,
+            height=0
+        )
+
     if target_file:
         display_name = os.path.basename(target_file) if isinstance(target_file, str) else target_file.name
         if isinstance(target_file, str):
@@ -248,11 +285,10 @@ def main():
                 page_html = content_list[current_idx]
                 st.markdown(f'<div class="novel-container-page">{page_html}</div>', unsafe_allow_html=True)
                 
-                # [핵심] 플로팅 앵커 및 버튼
+                # 플로팅 네비게이션
                 st.markdown('<div class="nav-anchor"></div>', unsafe_allow_html=True)
                 st.markdown(f'<div class="page-info-overlay">{current_idx + 1} / {max_page}</div>', unsafe_allow_html=True)
                 
-                # [NEW] use_container_width=False 적용 (버튼 작게 만들기)
                 c_prev, c_next = st.columns([1, 1])
                 with c_prev:
                     if st.button("◀", use_container_width=False):
@@ -265,7 +301,7 @@ def main():
     else:
         st.markdown(f"""
         <div style='text-align:center; padding-top: 150px; opacity: 0.6; color: {st.session_state.text_color};'>
-            <h2>📂 케이뷰어 V59</h2>
+            <h2>📂 케이뷰어 V61</h2>
             <p>왼쪽 사이드바에서 책을 선택해주세요.</p>
         </div>
         """, unsafe_allow_html=True)

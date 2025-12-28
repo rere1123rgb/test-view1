@@ -13,17 +13,20 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
 
         .stApp {{ background-color: {bg_color}; }}
 
-        /* [V60 수정] 헤더를 숨기지 않고 '투명'하게 변경하여 사이드바 버튼 살림 */
+        .block-container {{
+            padding-top: 35px !important;
+            padding-bottom: 0rem !important;
+            max-width: 100% !important;
+        }}
+        
         header {{
             background: transparent !important;
             height: auto !important;
-            z-index: 99 !important; /* 맨 앞으로 */
+            z-index: 99 !important;
         }}
-        
-        /* 사이드바 여는 화살표 버튼 커스텀 */
         [data-testid="stSidebarCollapsedControl"] {{
             color: {text_color} !important;
-            background-color: {bg_color} !important; /* 본문 배경색과 동일하게 */
+            background-color: {bg_color} !important;
             border: 1px solid {border_color} !important;
             border-radius: 50% !important;
             padding: 4px !important;
@@ -32,14 +35,6 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
             box-shadow: 0 2px 5px rgba(0,0,0,0.1);
         }}
 
-        /* 상단 여백 설정 (버튼과 겹치지 않게 아주 약간만 줌) */
-        .block-container {{
-            padding-top: 35px !important; /* 화살표 버튼 공간 확보 */
-            padding-bottom: 0rem !important;
-            max-width: 100% !important;
-        }}
-
-        /* 스크롤 모드 (PC) */
         .novel-container-scroll {{
             background-color: {bg_color};
             color: {text_color};
@@ -57,7 +52,6 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
         .novel-container-scroll::-webkit-scrollbar-track {{ background: {bg_subtle}; border-radius: 8px; }}
         .novel-container-scroll::-webkit-scrollbar-thumb {{ background-color: {text_color}40; border-radius: 10px; border: 3px solid {bg_color}; }}
 
-        /* 페이지 모드 (모바일) - 여백 최소화 */
         .novel-container-page {{
             background-color: {bg_color};
             color: {text_color};
@@ -68,7 +62,6 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
             border: none;
         }}
 
-        /* 텍스트 본문 */
         div.novel-text, div.novel-text p, div.novel-text span {{
             font-family: {font_family} !important; 
             font-size: {font_size}px !important; 
@@ -80,50 +73,63 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
             margin-bottom: 15px;
         }}
 
-        /* 모바일 하단 플로팅 바 (슬림 & 미니멀) */
+        /* [V64] 텍스트 스타일 세분화 */
+        /* 1. 대화문 (진하게, 본문색) */
+        div.novel-text span.dialogue {{
+            font-weight: 900 !important;
+            color: {text_color} !important;
+        }}
+        
+        /* 2. 속마음 (보통 굵기, 회색) */
+        div.novel-text span.thought {{
+            color: #7f8c8d !important;
+            font-weight: normal !important;
+        }}
+        
+        /* 3. 강조/인용 (약간 굵게, 흑청색) */
+        div.novel-text span.emphasis {{
+            color: #1a237e !important; /* 흑청색 (Deep Indigo) */
+            font-weight: bold !important;
+        }}
+        
+        @media (prefers-color-scheme: dark) {{
+            div.novel-text span.thought {{ color: #a0a0a0 !important; }}
+            div.novel-text span.emphasis {{ color: #7986cb !important; }} /* 다크모드에선 연한 청색 */
+        }}
+
         @media (max-width: 768px) {{
-            /* 1. 하단바 컨테이너 */
             div.nav-anchor ~ div[data-testid="stHorizontalBlock"] {{
                 position: fixed !important;
                 bottom: 10px !important;
                 left: 50% !important;
                 transform: translateX(-50%) !important;
-                
                 width: auto !important;
                 min-width: 280px !important;
                 max-width: 90% !important;
-                
                 background-color: {bg_color}E6 !important;
                 border: 1px solid {border_color} !important;
                 border-radius: 50px !important;
                 box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
-                
                 padding: 4px 15px !important;
                 z-index: 999999 !important;
                 margin: 0 !important;
-                
                 display: flex !important;
                 flex-direction: row !important;
                 align-items: center !important;
                 justify-content: space-between !important;
                 gap: 0px !important;
             }}
-
-            /* 2. 내부 컬럼 */
             div.nav-anchor ~ div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {{
                 width: auto !important;
                 flex: 0 1 auto !important;
                 min-width: 0 !important;
             }}
-
-            /* 3. 버튼 스타일 */
             div.nav-anchor ~ div[data-testid="stHorizontalBlock"] button {{
                 width: auto !important;
                 height: 32px !important;
                 min-height: 0px !important;
                 padding: 0px 12px !important;
                 margin: 0 !important;
-                
                 border-radius: 20px !important;
                 font-size: 0.85rem !important;
                 border: 1px solid {border_color} !important;
@@ -131,12 +137,9 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
                 color: {text_color} !important;
                 line-height: 1 !important;
             }}
-            
             div.nav-anchor ~ div[data-testid="stHorizontalBlock"] button:active {{
                 background-color: {text_color}10 !important;
             }}
-
-            /* 4. 페이지 번호 텍스트 */
             div.nav-anchor ~ div[data-testid="stHorizontalBlock"] div.stMarkdown p {{
                 font-size: 0.8rem !important;
                 margin: 0 10px !important;
@@ -148,9 +151,6 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
         }}
 
         h1 {{ color: {text_color} !important; font-family: {font_family} !important; text-align: center; margin-bottom: 20px; font-weight: bold; font-size: 1.8em; }}
-        .dialogue {{ font-weight: bold; color: {text_color}; }}
-        .thought {{ color: #7f8c8d; }}
-        @media (prefers-color-scheme: dark) {{ .thought {{ color: #a0a0a0; }} }}
         .novel-dateline {{ font-family: 'Nanum Gothic', sans-serif !important; font-size: 0.85em !important; color: {text_color}; opacity: 0.7; margin: 5px 0 15px 0; padding-bottom: 5px; border-bottom: 1px dashed {border_color}; text-align: right; display: block; }}
         .system-msg {{ font-family: 'Nanum Gothic', sans-serif !important; font-weight: bold; color: {text_color}; background-color: {text_color}10; border-left: 4px solid {text_color}60; padding: 8px 12px; margin: 10px 0; border-radius: 4px; font-size: {font_size}px; line-height: 1.4; }}
         

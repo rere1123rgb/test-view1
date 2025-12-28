@@ -1,0 +1,29 @@
+{
+    "common": {
+        "folder_path": "",
+        "custom_orders": {
+
+            ]
+        },
+        "last_opened_path": "",
+        "view_type": "page"
+    },
+    "pc": {
+        "theme": "눈 보호",
+        "bg_color": "#e8f5e9",
+        "text_color": "#1b5e20",
+        "font_size": 18,
+        "line_height": 1.6,
+        "content_margin": 6,
+        "font_family": "리디바탕"
+    },
+    "mobile": {
+        "theme": "눈 보호",
+        "bg_color": "#e8f5e9",
+        "text_color": "#1b5e20",
+        "font_size": 16,
+        "line_height": 1.6,
+        "content_margin": 6,
+        "font_family": "코펍바탕"
+    }
+}
