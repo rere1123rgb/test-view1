@@ -13,9 +13,11 @@ except ImportError:
     HAS_JS_LIB = False
 
 CONFIG_FILE = "viewer_config.json"
+
+# [V82] 사용자 선호 기본값 유지
 DEFAULT_CONFIG = {
     "common": { "folder_path": "", "custom_orders": {}, "last_opened_path": None, "view_type": "scroll" },
-    "pc": { "theme": "일반", "bg_color": "#fcfcfc", "text_color": "#2c3e50", "font_size": 18, "line_height": 1.8, "content_margin": 20, "font_family": "명조체 (Nanum Myeongjo)" },
+    "pc": { "theme": "일반", "bg_color": "#fcfcfc", "text_color": "#2c3e50", "font_size": 19, "line_height": 1.6, "content_margin": 2, "font_family": "명조체 (Nanum Myeongjo)" },
     "mobile": { "theme": "일반", "bg_color": "#fcfcfc", "text_color": "#2c3e50", "font_size": 15, "line_height": 1.6, "content_margin": 3, "font_family": "리디바탕" }
 }
 
@@ -32,7 +34,6 @@ def load_config():
 def save_config():
     mode = st.session_state.get("ui_mode", "pc")
     current_path = st.session_state.get("current_file_path")
-    # 파일 객체는 JSON 직렬화가 안되므로, 문자열 경로일 때만 저장하거나 스킵
     path_to_save = current_path if isinstance(current_path, str) else None
     
     current_full_config = load_config()
@@ -44,14 +45,22 @@ def save_config():
         "theme": st.session_state.get("theme_name", "일반"),
         "bg_color": st.session_state.get("bg_color", "#fcfcfc"),
         "text_color": st.session_state.get("text_color", "#2c3e50"),
-        "font_size": st.session_state.get("font_size", 18),
-        "line_height": st.session_state.get("line_height", 1.8),
-        "content_margin": st.session_state.get("content_margin", 10),
+        "font_size": st.session_state.get("font_size", 19),
+        "line_height": st.session_state.get("line_height", 1.6),
+        "content_margin": st.session_state.get("content_margin", 2),
         "font_family": st.session_state.get("font_family", "명조체 (Nanum Myeongjo)")
     }
     current_full_config[mode] = visual_settings
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_full_config, f, indent=4, ensure_ascii=False)
+
+# [V82] 강력한 텍스트 정화 함수 (유령 문자 소각)
+def clean_file_content(text):
+    if not text: return ""
+    # 제어 문자(0-31) 중 줄바꿈(10), 탭(9), CR(13)을 제외하고 모두 삭제
+    # 특히 Null Byte(\x00)가 태그를 깨뜨리는 주범임
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]', '', text)
+    return text
 
 st.set_page_config(page_title="케이뷰어 (K-Viewer)", page_icon="📖", layout="wide")
 
@@ -77,7 +86,7 @@ session_defaults = {
     "content_margin": active_config["content_margin"], "font_family": active_config["font_family"], "theme_name": active_config["theme"],
     "folder_path_input": common_config["folder_path"], "custom_orders": common_config["custom_orders"], "saved_folder_path": common_config["folder_path"],
     "current_file_path": initial_file_path, "view_type": common_config.get("view_type", "scroll"), "expanded_folders": set(), "page_idx": 0,
-    "uploaded_files_cache": [] # 업로드된 파일 리스트 저장
+    "uploaded_files_cache": []
 }
 for key, val in session_defaults.items():
     if key not in st.session_state: st.session_state[key] = val
@@ -210,9 +219,11 @@ def render_settings_popup():
         with c2:
             if st.button("눈 보호", use_container_width=True): apply_theme("눈 보호")
             if st.button("다크", use_container_width=True): apply_theme("다크")
-    st.slider("좌우 여백 (%)", 0, 35, key="content_margin", on_change=save_config)
-    st.slider("글자 크기", 14, 36, key="font_size", on_change=save_config)
-    st.slider("줄 간격", 1.4, 2.5, step=0.1, key="line_height", on_change=save_config)
+    
+    st.slider("좌우 여백 (%)", 0, 15, key="content_margin", on_change=save_config)
+    st.slider("글자 크기", 14, 26, key="font_size", on_change=save_config)
+    st.slider("줄 간격", 1.4, 2.0, step=0.1, key="line_height", on_change=save_config)
+    
     font_options = ["명조체 (Nanum Myeongjo)", "고딕체 (Nanum Gothic)", "리디바탕", "코펍바탕", "고운바탕 (Gowun Batang)"]
     st.selectbox("폰트 선택", font_options, key="font_family", on_change=save_config)
 
@@ -235,43 +246,31 @@ def main():
         with st.expander("⚙️ 경로 및 파일 열기", expanded=False):
             st.text_input("서고 폴더 경로", key="folder_path_input", on_change=save_config, placeholder="C:\\Novels")
             
-            # [NEW] 다중 파일 업로드 지원 및 선택 로직
-            uploaded_files = st.file_uploader(
-                "임시 파일 열기 (여러 개 가능)", 
-                type=['json'], 
-                accept_multiple_files=True, # 다중 선택 허용
-                key="uploader"
-            )
+            uploaded_files = st.file_uploader("임시 파일 열기 (여러 개 가능)", type=['json'], accept_multiple_files=True, key="uploader")
             
             if uploaded_files:
-                # 업로드된 파일들의 이름 목록 생성
                 file_map = {f.name: f for f in uploaded_files}
                 file_names = list(file_map.keys())
-                
-                # 선택 박스 표시
                 selected_file_name = st.selectbox("읽을 파일 선택", file_names, index=0)
-                
-                # 선택된 파일을 현재 파일로 설정
                 if selected_file_name:
                     st.session_state.current_file_path = file_map[selected_file_name]
-                    # 파일이 바뀌면 페이지 초기화 (같은 파일이 아닐 경우만)
-                    # 여기서는 간단히 항상 0으로 하거나, 로직을 추가할 수 있음.
-                    # 기존 로직과 충돌하지 않게 둠.
+        
+        # [V82] 캐시 삭제 버튼 추가
+        st.markdown("---")
+        if st.button("🗑️ 캐시 및 데이터 초기화", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
 
     with st.popover("⚙️", use_container_width=False): render_settings_popup()
     
     target_file = st.session_state.get("current_file_path")
     
-    # [자동 스크롤] 파일 변경 감지
-    # 업로드된 파일 객체는 이름(name)으로 식별
+    if "last_read_file" not in st.session_state: st.session_state.last_read_file = None
+    
     current_identifier = target_file.name if hasattr(target_file, 'name') else str(target_file)
-
-    if "last_read_file" not in st.session_state:
-        st.session_state.last_read_file = None
-        
     if current_identifier != st.session_state.last_read_file:
         st.session_state.last_read_file = current_identifier
-        st.session_state.page_idx = 0 # 파일 바뀌면 페이지도 0으로
+        st.session_state.page_idx = 0
         components.html(
             """
             <script>
@@ -288,13 +287,15 @@ def main():
     if target_file:
         display_name = os.path.basename(target_file) if isinstance(target_file, str) else target_file.name
         
-        # 파일 내용 읽기
+        # [V82] 파일 읽기 후 clean_file_content로 유령 문자 즉시 소각
         if isinstance(target_file, str):
-            with open(target_file, 'r', encoding='utf-8') as f: file_content = f.read()
+            with open(target_file, 'r', encoding='utf-8', errors='replace') as f:
+                raw_content = f.read()
+                file_content = clean_file_content(raw_content)
         else:
-            # 파일 객체인 경우 (처음 읽을 때만 seek(0) 필요할 수 있음)
             target_file.seek(0)
-            file_content = target_file.getvalue().decode("utf-8")
+            raw_content = target_file.getvalue().decode("utf-8", errors="replace")
+            file_content = clean_file_content(raw_content)
         
         limit = 450 if is_mobile_mode else 2500
         content_list, error = processor.get_novel_content(file_content, chunk_size=limit)
@@ -332,7 +333,7 @@ def main():
     else:
         st.markdown(f"""
         <div style='text-align:center; padding-top: 150px; opacity: 0.6; color: {st.session_state.text_color};'>
-            <h2>📂 케이뷰어 V67</h2>
+            <h2>📂 케이뷰어 V82</h2>
             <p>왼쪽 사이드바에서 책을 선택해주세요.</p>
         </div>
         """, unsafe_allow_html=True)

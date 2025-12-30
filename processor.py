@@ -2,6 +2,7 @@ import re
 import json
 import streamlit as st
 import uuid
+import unicodedata
 
 # [GLOBAL] 정규식
 RE_HEADER_RESPONSE = re.compile(r'^#\s+응답.*$', re.MULTILINE)
@@ -13,20 +14,27 @@ RE_ENGLISH_CHAR = re.compile(r'[a-zA-Z]')
 RE_STATUS_DATE = re.compile(r'Date\s*:\s*([^|\]]+)', re.IGNORECASE)
 RE_STATUS_TIME = re.compile(r'Time\s*:\s*([^|\]]+)', re.IGNORECASE)
 
-# 이미지 태그 등 모든 태그 패턴
-RE_TAG_PATTERN = re.compile(r'<[^>]+>') 
+# 모든 태그 패턴 (검증용)
+RE_TAG_PATTERN = re.compile(r'<(/?[^\s>]+)([^>]*)>')
 
-# 시스템 메시지
 RE_SYS_MSG = re.compile(r'^-\s*System Message:\s*(.*)', re.MULTILINE)
-RE_SYS_MSG_BRACE = re.compile(r'^-\s*\{System Message:\s*(.*?)\}', re.MULTILINE)
+RE_SYS_MSG_BRACE = re.compile(r'-\s*\{System\s+Message:\s*([\s\S]*?)\}', re.MULTILINE)
 
-# 따옴표 감지
 RE_QUOTE_DOUBLE = re.compile(r'"([^"]*)"')
 RE_QUOTE_SINGLE = re.compile(r"'([^']*)'") 
 
 RE_PREV_SUMMARY = re.compile(r'▽.*?△', re.DOTALL)
 
-# 파서 유틸리티
+# 라이트보드(Lightboard) 정규식
+RE_LIGHTBOARD = re.compile(r'<lightboard-comments>(.*?)</lightboard-comments>', re.DOTALL | re.IGNORECASE)
+
+# [V82] 텍스트 정화 강화 (제어 문자 완전 박멸)
+def sanitize_text(text):
+    if not text: return ""
+    text = unicodedata.normalize('NFC', text)
+    # 정규식으로 제어 문자(0-31, 127, Replacement) 삭제 (단, 탭, 줄바꿈 등은 보존)
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]', '', text)
+
 def parse_nested_block(text, start_marker, open_char, close_char, repl_func):
     result = []
     cursor = 0
@@ -60,6 +68,37 @@ def parse_nested_block(text, start_marker, open_char, close_char, repl_func):
             break
     return "".join(result)
 
+def convert_lightboard_content(raw_content):
+    lines = raw_content.strip().split('\n')
+    html = '<div class="lightboard-container">'
+    for line in lines:
+        line = line.strip()
+        if not line: continue
+        is_post = line.startswith('[Post]')
+        is_comment = line.startswith('[Comment]')
+        if not (is_post or is_comment): continue
+        content_part = line[6:] if is_post else line[9:]
+        fields = content_part.split('|')
+        data = {}
+        for field in fields:
+            if ':' in field:
+                key, val = field.split(':', 1)
+                data[key.strip()] = val.strip()
+        author = data.get('Author', 'Unknown')
+        time_str = data.get('Time', '')
+        body = data.get('Content', '')
+        meta_parts = []
+        if time_str: meta_parts.append(time_str)
+        if is_post:
+            up = data.get('Upvotes', '0')
+            down = data.get('Downvotes', '0')
+            meta_parts.append(f"추천 {up}")
+        meta_str = " | ".join(meta_parts)
+        row_class = "lb-post" if is_post else "lb-comment"
+        html += f'<div class="{row_class}"><span class="lb-header"><b>{author}</b> <span class="lb-meta">{meta_str}</span></span><br><span class="lb-body">{body}</span></div>'
+    html += '</div>'
+    return f'<details><summary>🔻 라이트보드 (Lightboard)</summary>{html}</details>'
+
 def convert_hn_content(raw_content):
     def parse_single_hn(full_str):
         posts_html = ""
@@ -87,12 +126,13 @@ def convert_hn_content(raw_content):
                     if current_cmt_author: p_data['C'].append((current_cmt_author, f))
                     current_cmt_author = None
             posts_html += '<div class="comm-post">'
-            posts_html += f'<div class="comm-title">{p_data.get("PT", "")}</div>'
-            posts_html += f'<div class="comm-meta">{p_data.get("PA","")} | {p_data.get("PDATE","")} | 조회 {p_data.get("PVIEWS","")} | 추천 {p_data.get("PRECOM","")}</div>'
-            posts_html += f'<div class="comm-body">{p_data.get("PCONT", "")}</div>'
+            posts_html += f'<span class="comm-title">{p_data.get("PT", "")}</span><br>'
+            posts_html += f'<span class="comm-meta">{p_data.get("PA","")} | {p_data.get("PDATE","")} | 조회 {p_data.get("PVIEWS","")} | 추천 {p_data.get("PRECOM","")}</span><br>'
+            posts_html += f'<span class="comm-body">{p_data.get("PCONT", "")}</span>'
             if p_data['C']:
                 posts_html += '<div class="comm-comments">'
-                for author, body in p_data['C']: posts_html += f'<div class="comm-cmt-row"><span class="comm-cmt-user">{author}</span> {body}</div>'
+                for author, body in p_data['C']:
+                    posts_html += f'<span class="comm-cmt-row"><span class="comm-cmt-user">{author}</span> {body}</span><br>'
                 posts_html += '</div>'
             posts_html += '</div>'
         return posts_html
@@ -114,24 +154,21 @@ def convert_wncs_content(raw_content):
             html += f'<div class="wncs-author-note">작가의 말: {an_text}</div>'
         elif line.startswith('R:|'):
             parts = line.split('|')
-            if len(parts) >= 3: html += f'<div class="wncs-item wncs-reply"><span class="wncs-user">↳ {parts[1]}</span> <span class="wncs-content">{parts[2]}</span></div>'
+            if len(parts) >= 3:
+                html += f'<div class="wncs-item wncs-reply"><span class="wncs-user">↳ {parts[1]}</span> {parts[2]}</div>'
         else:
             parts = line.split('|')
             if len(parts) >= 5:
-                html += f'<div class="wncs-item"><div class="wncs-info">{parts[1]} | 👍 {parts[3]}</div><div class="wncs-main"><span class="wncs-user">{parts[0]}</span> {parts[4]}</div></div>'
+                html += f'<div class="wncs-item"><span class="wncs-info">{parts[1]} | 👍 {parts[3]}</span><br><span class="wncs-user">{parts[0]}</span> {parts[4]}</div>'
     html += '</div>'
     summary_label = "🔻 댓글창 (Comments)"
-    if gn_text or an_text:
-        summary_label += '<div style="margin-top: 6px; font-weight: normal; font-size: 0.85em; color: inherit; opacity: 0.8; line-height: 1.4;">'
-        if gn_text: summary_label += f'{gn_text}<br>'
-        if an_text: summary_label += f'{an_text}'
-        summary_label += '</div>'
+    if gn_text: summary_label += f" - {gn_text}"
     return f'<details><summary>{summary_label}</summary>{html}</details>'
 
 def format_novel_content(text):
     if not text: return ""
+    text = sanitize_text(text)
     
-    # 0. 기본 청소
     text = text.strip()
     text = text.replace('[Status Interface]', '')
     text = RE_HEADER_RESPONSE.sub('', text)
@@ -141,35 +178,35 @@ def format_novel_content(text):
     text = RE_PREV_SUMMARY.sub('', text)
     text = RE_MULTI_NEWLINE.sub('\n\n', text)
 
-    # 1. [절대 우선] 구조적 태그 및 HTML 태그 완전 보호
-    # 따옴표 변환이나 다른 로직이 돌기 전에, <...> 형태는 모두 숨겨둡니다.
     protected_map = {}
     def protect_content(content):
         key = f"__KVIEWER_PROTECTED_{uuid.uuid4().hex}__"
         protected_map[key] = content
         return key
 
-    # (1-1) 이미지 태그 특별 처리 (placeholder로 변환 후 보호)
+    text = RE_LIGHTBOARD.sub(lambda m: protect_content(convert_lightboard_content(m.group(1))), text)
+
     def repl_img_tag_safe(match):
         full_tag = match.group(0)
-        # 태그 안에서 따옴표로 감싸진 파일명 추출 (예: <img="name">)
         file_match = re.search(r'[\'"]([^\'"]+)[\'"]', full_tag)
         filename = file_match.group(1) if file_match else "이미지"
-        # HTML로 변환해서 저장
         return protect_content(f"<div class='novel-img-placeholder'>🖼️ [Image] {filename}</div>")
     
-    # <img ... > 패턴을 먼저 찾아 처리
     text = re.sub(r'<img[^>]+>', repl_img_tag_safe, text)
 
-    # (1-2) 나머지 모든 HTML 태그 보호 (<br>, <div>, <span> 등)
-    # 이미 처리된 img 태그는 protected_key로 바뀌었으므로 영향받지 않음
-    text = RE_TAG_PATTERN.sub(lambda m: protect_content(m.group(0)), text)
+    def check_and_protect_tag(match):
+        full_tag = match.group(0)
+        tag_name = match.group(1).replace('/', '') 
+        if not re.match(r'^[a-zA-Z0-9-]+$', tag_name):
+            safe_text = full_tag.replace('<', '&lt;').replace('>', '&gt;')
+            return protect_content(safe_text)
+        return protect_content(full_tag)
 
-    # 2. 커뮤니티/댓글창 보호 (독자적 포맷)
+    text = RE_TAG_PATTERN.sub(check_and_protect_tag, text)
+
     text = parse_nested_block(text, 'HN[', '[', ']', lambda c: protect_content(convert_hn_content(c)))
     text = parse_nested_block(text, 'WNCS{', '{', '}', lambda c: protect_content(convert_wncs_content(c)))
 
-    # 3. 상태창 등 대괄호 보호
     def convert_status_content(raw_content):
         if not RE_STATUS_DATE.search(raw_content): return None
         date_match = RE_STATUS_DATE.search(raw_content)
@@ -182,7 +219,6 @@ def format_novel_content(text):
         return protect_content(html)
     text = parse_nested_block(text, '', '[', ']', convert_status_content)
 
-    # 4. 시스템 메시지 보호
     def repl_sys_msg_brace_wrapper(match):
         content = match.group(1)
         content = content.replace('**', '') 
@@ -194,10 +230,6 @@ def format_novel_content(text):
         return protect_content(f"<div class='system-msg'>🔔 System: {content}</div>")
     text = RE_SYS_MSG.sub(repl_sys_msg_wrapper, text)
 
-    # =========================================================
-    # 5. 이제 안전하게 텍스트 처리 (HTML 태그는 모두 숨겨진 상태)
-    # =========================================================
-    
     lines = text.split('\n')
     filtered_lines = []
     for line in lines:
@@ -205,19 +237,15 @@ def format_novel_content(text):
         if not stripped:
             filtered_lines.append(line)
             continue
-        # 이미 보호된 키는 건너뜀 (HN, WNCS 등)
         if stripped.startswith('__KVIEWER_PROTECTED_'):
             filtered_lines.append(line)
             continue
-            
         eng_count = sum(1 for c in line if 65 <= ord(c) <= 90 or 97 <= ord(c) <= 122)
         if len(line) > 0 and (eng_count / len(line)) >= 0.2:
-            # 영어 비율이 너무 높으면 필터링 (선택 사항)
              pass 
         filtered_lines.append(line)
     text = '\n'.join(filtered_lines)
 
-    # (1) 따옴표 표준화
     replacements = {
         '“': '"', '”': '"', '〝': '"', '〞': '"', '″': '"',
         '‘': "'", '’': "'", '‚': "'", '‛': "'", '′': "'",
@@ -226,31 +254,22 @@ def format_novel_content(text):
     for k, v in replacements.items():
         text = text.replace(k, v)
 
-    # (2) 대화문 마킹
     text = RE_QUOTE_DOUBLE.sub(r'﹇DIA_S﹈\1﹇DIA_E﹈', text)
     
-    # (3) 작은따옴표(속마음/강조) 분류
     def single_quote_classifier(match):
         content = match.group(1)
         stripped = content.strip()
         if not stripped: return f"'{content}'"
-        
-        # 15자 이상이거나 문장부호가 있으면 '속마음'
         is_thought = (len(stripped) >= 15) or (stripped[-1] in ['.', '?', '!', '…', '~'])
-        
         if is_thought:
             return f'<span class="thought">‘{content}’</span>'
         else:
             return f'<span class="emphasis">‘{content}’</span>'
 
     text = RE_QUOTE_SINGLE.sub(single_quote_classifier, text)
-
-    # (4) 대화문 HTML 변환
     text = text.replace('﹇DIA_S﹈', '<span class="dialogue">“')
     text = text.replace('﹇DIA_E﹈', '”</span>')
 
-    # 6. 보호된 태그 최종 복원
-    # 역순이나 순서는 상관없지만 map에 있는걸 다 복구
     for key, html in protected_map.items():
         text = text.replace(key, html)
 
