@@ -14,7 +14,6 @@ except ImportError:
 
 CONFIG_FILE = "viewer_config.json"
 
-# [V82] 사용자 선호 기본값 유지
 DEFAULT_CONFIG = {
     "common": { "folder_path": "", "custom_orders": {}, "last_opened_path": None, "view_type": "scroll" },
     "pc": { "theme": "일반", "bg_color": "#fcfcfc", "text_color": "#2c3e50", "font_size": 19, "line_height": 1.6, "content_margin": 2, "font_family": "명조체 (Nanum Myeongjo)" },
@@ -53,14 +52,6 @@ def save_config():
     current_full_config[mode] = visual_settings
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_full_config, f, indent=4, ensure_ascii=False)
-
-# [V82] 강력한 텍스트 정화 함수 (유령 문자 소각)
-def clean_file_content(text):
-    if not text: return ""
-    # 제어 문자(0-31) 중 줄바꿈(10), 탭(9), CR(13)을 제외하고 모두 삭제
-    # 특히 Null Byte(\x00)가 태그를 깨뜨리는 주범임
-    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]', '', text)
-    return text
 
 st.set_page_config(page_title="케이뷰어 (K-Viewer)", page_icon="📖", layout="wide")
 
@@ -255,10 +246,10 @@ def main():
                 if selected_file_name:
                     st.session_state.current_file_path = file_map[selected_file_name]
         
-        # [V82] 캐시 삭제 버튼 추가
         st.markdown("---")
         if st.button("🗑️ 캐시 및 데이터 초기화", use_container_width=True):
             st.cache_data.clear()
+            st.session_state.uploaded_files_cache = []
             st.rerun()
 
     with st.popover("⚙️", use_container_width=False): render_settings_popup()
@@ -287,15 +278,13 @@ def main():
     if target_file:
         display_name = os.path.basename(target_file) if isinstance(target_file, str) else target_file.name
         
-        # [V82] 파일 읽기 후 clean_file_content로 유령 문자 즉시 소각
+        # [V85] errors='replace'로 복구 (사용자 요청: 문자 삭제하지 말 것)
         if isinstance(target_file, str):
             with open(target_file, 'r', encoding='utf-8', errors='replace') as f:
-                raw_content = f.read()
-                file_content = clean_file_content(raw_content)
+                file_content = f.read()
         else:
             target_file.seek(0)
-            raw_content = target_file.getvalue().decode("utf-8", errors="replace")
-            file_content = clean_file_content(raw_content)
+            file_content = target_file.getvalue().decode("utf-8", errors="replace")
         
         limit = 450 if is_mobile_mode else 2500
         content_list, error = processor.get_novel_content(file_content, chunk_size=limit)
@@ -333,7 +322,7 @@ def main():
     else:
         st.markdown(f"""
         <div style='text-align:center; padding-top: 150px; opacity: 0.6; color: {st.session_state.text_color};'>
-            <h2>📂 케이뷰어 V82</h2>
+            <h2>📂 케이뷰어 V85</h2>
             <p>왼쪽 사이드바에서 책을 선택해주세요.</p>
         </div>
         """, unsafe_allow_html=True)

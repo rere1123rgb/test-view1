@@ -14,7 +14,14 @@ RE_ENGLISH_CHAR = re.compile(r'[a-zA-Z]')
 RE_STATUS_DATE = re.compile(r'Date\s*:\s*([^|\]]+)', re.IGNORECASE)
 RE_STATUS_TIME = re.compile(r'Time\s*:\s*([^|\]]+)', re.IGNORECASE)
 
-# 모든 태그 패턴 (검증용)
+# [V85] 허용할 안전한 태그 목록 (Whitelist)
+# 이 목록에 없는 태그(예: br, script, span 등)는 전부 텍스트로 변환됨
+ALLOWED_TAGS = {
+    'div', 'span', 'p', 'br', 'hr', 'img', 'details', 'summary',
+    'b', 'i', 'strong', 'em', 'u', 'mark', 'small', 'sub', 'sup', 'del', 'ins'
+}
+
+# 태그 패턴 (모든 <...> 형태 감지)
 RE_TAG_PATTERN = re.compile(r'<(/?[^\s>]+)([^>]*)>')
 
 RE_SYS_MSG = re.compile(r'^-\s*System Message:\s*(.*)', re.MULTILINE)
@@ -25,15 +32,12 @@ RE_QUOTE_SINGLE = re.compile(r"'([^']*)'")
 
 RE_PREV_SUMMARY = re.compile(r'▽.*?△', re.DOTALL)
 
-# 라이트보드(Lightboard) 정규식
 RE_LIGHTBOARD = re.compile(r'<lightboard-comments>(.*?)</lightboard-comments>', re.DOTALL | re.IGNORECASE)
 
-# [V82] 텍스트 정화 강화 (제어 문자 완전 박멸)
+# [V85] 텍스트 정화 (문자 삭제 최소화 - NFC 정규화만 수행)
 def sanitize_text(text):
     if not text: return ""
-    text = unicodedata.normalize('NFC', text)
-    # 정규식으로 제어 문자(0-31, 127, Replacement) 삭제 (단, 탭, 줄바꿈 등은 보존)
-    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]', '', text)
+    return unicodedata.normalize('NFC', text)
 
 def parse_nested_block(text, start_marker, open_char, close_char, repl_func):
     result = []
@@ -194,12 +198,17 @@ def format_novel_content(text):
     
     text = re.sub(r'<img[^>]+>', repl_img_tag_safe, text)
 
+    # [V85 FIX] 태그 안전성 검사 (Whitelist)
+    # 허용된 태그가 아니면, 태그를 텍스트로 변환(Escape)하여 브라우저 오류 방지
     def check_and_protect_tag(match):
         full_tag = match.group(0)
-        tag_name = match.group(1).replace('/', '') 
-        if not re.match(r'^[a-zA-Z0-9-]+$', tag_name):
+        tag_name = match.group(1).replace('/', '').lower()
+        
+        # 화이트리스트에 없는 태그(br 등)는 텍스트로 변환
+        if tag_name not in ALLOWED_TAGS:
             safe_text = full_tag.replace('<', '&lt;').replace('>', '&gt;')
             return protect_content(safe_text)
+            
         return protect_content(full_tag)
 
     text = RE_TAG_PATTERN.sub(check_and_protect_tag, text)
@@ -230,6 +239,7 @@ def format_novel_content(text):
         return protect_content(f"<div class='system-msg'>🔔 System: {content}</div>")
     text = RE_SYS_MSG.sub(repl_sys_msg_wrapper, text)
 
+    # 영어 문장 필터링 (보호된 블록 제외)
     lines = text.split('\n')
     filtered_lines = []
     for line in lines:
@@ -237,12 +247,15 @@ def format_novel_content(text):
         if not stripped:
             filtered_lines.append(line)
             continue
+        
         if stripped.startswith('__KVIEWER_PROTECTED_'):
             filtered_lines.append(line)
             continue
+        
         eng_count = sum(1 for c in line if 65 <= ord(c) <= 90 or 97 <= ord(c) <= 122)
-        if len(line) > 0 and (eng_count / len(line)) >= 0.2:
-             pass 
+        if len(line) > 0 and (eng_count / len(line)) >= 0.3:
+             continue 
+        
         filtered_lines.append(line)
     text = '\n'.join(filtered_lines)
 
