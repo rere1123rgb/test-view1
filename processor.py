@@ -176,8 +176,8 @@ def format_novel_content(text):
     # [V86] 불필요한 메타데이터/더미 문자열 삭제 (최우선 처리)
     text = text.replace('<Thoughts>', '')
     text = text.replace('</Thoughts>', '')
-    text = text.replace(''<!-- End platform managed -->, '')
-    text = text.replace('<!-- End platform managed -->', '')
+    text = text.replace('<!-- End platform managed -->','')
+    text = text.replace('<!-- Platform managed do not generate -->', '')
     
     text = text.strip()
     text = text.replace('[Status Interface]', '')
