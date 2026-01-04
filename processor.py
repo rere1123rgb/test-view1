@@ -14,14 +14,13 @@ RE_ENGLISH_CHAR = re.compile(r'[a-zA-Z]')
 RE_STATUS_DATE = re.compile(r'Date\s*:\s*([^|\]]+)', re.IGNORECASE)
 RE_STATUS_TIME = re.compile(r'Time\s*:\s*([^|\]]+)', re.IGNORECASE)
 
-# [V85] 허용할 안전한 태그 목록 (Whitelist)
-# 이 목록에 없는 태그(예: br, script, span 등)는 전부 텍스트로 변환됨
+# 허용할 안전한 태그 목록 (Whitelist)
 ALLOWED_TAGS = {
     'div', 'span', 'p', 'br', 'hr', 'img', 'details', 'summary',
     'b', 'i', 'strong', 'em', 'u', 'mark', 'small', 'sub', 'sup', 'del', 'ins'
 }
 
-# 태그 패턴 (모든 <...> 형태 감지)
+# 태그 패턴
 RE_TAG_PATTERN = re.compile(r'<(/?[^\s>]+)([^>]*)>')
 
 RE_SYS_MSG = re.compile(r'^-\s*System Message:\s*(.*)', re.MULTILINE)
@@ -34,10 +33,11 @@ RE_PREV_SUMMARY = re.compile(r'▽.*?△', re.DOTALL)
 
 RE_LIGHTBOARD = re.compile(r'<lightboard-comments>(.*?)</lightboard-comments>', re.DOTALL | re.IGNORECASE)
 
-# [V85] 텍스트 정화 (문자 삭제 최소화 - NFC 정규화만 수행)
+# 텍스트 정화 강화
 def sanitize_text(text):
     if not text: return ""
-    return unicodedata.normalize('NFC', text)
+    text = unicodedata.normalize('NFC', text)
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]', '', text)
 
 def parse_nested_block(text, start_marker, open_char, close_char, repl_func):
     result = []
@@ -173,6 +173,12 @@ def format_novel_content(text):
     if not text: return ""
     text = sanitize_text(text)
     
+    # [V86] 불필요한 메타데이터/더미 문자열 삭제 (최우선 처리)
+    text = text.replace('<Thoughts>', '')
+    text = text.replace('</Thoughts>', '')
+    text = text.replace('', '')
+    text = text.replace('', '')
+    
     text = text.strip()
     text = text.replace('[Status Interface]', '')
     text = RE_HEADER_RESPONSE.sub('', text)
@@ -198,17 +204,13 @@ def format_novel_content(text):
     
     text = re.sub(r'<img[^>]+>', repl_img_tag_safe, text)
 
-    # [V85 FIX] 태그 안전성 검사 (Whitelist)
-    # 허용된 태그가 아니면, 태그를 텍스트로 변환(Escape)하여 브라우저 오류 방지
+    # 태그 안전성 검사 (Whitelist)
     def check_and_protect_tag(match):
         full_tag = match.group(0)
         tag_name = match.group(1).replace('/', '').lower()
-        
-        # 화이트리스트에 없는 태그(br 등)는 텍스트로 변환
         if tag_name not in ALLOWED_TAGS:
             safe_text = full_tag.replace('<', '&lt;').replace('>', '&gt;')
             return protect_content(safe_text)
-            
         return protect_content(full_tag)
 
     text = RE_TAG_PATTERN.sub(check_and_protect_tag, text)
