@@ -1,12 +1,11 @@
 def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pct, is_mobile=False):
     
     border_color = f"{text_color}20"
-    bg_subtle = f"{text_color}05"
-    scrollbar_width = "18px" if is_mobile else "10px"
-    small_font_size = int(font_size * 0.85)
+    bg_subtle = f"{text_color}06"   # 아주 연한 배경색
+    accent_color = f"{text_color}60" # 강조 포인트 색상
     
-    # 강조색
-    accent_color = f"{text_color}40"
+    scrollbar_width = "18px" if is_mobile else "10px"
+    small_font_size = int(font_size * 0.88) # 가독성을 위해 조금 키움
     
     return f"""
     <style>
@@ -82,9 +81,18 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
         div.novel-text span.thought {{ color: #7f8c8d !important; font-weight: normal !important; }}
         div.novel-text span.emphasis {{ color: #1a237e !important; font-weight: bold !important; }}
         
+        /* 효과음 스타일 */
+        div.novel-text span.sound-effect {{ 
+            color: #95a5a6 !important; 
+            font-style: italic !important; 
+            font-weight: normal !important;
+            font-size: 0.95em !important;
+        }}
+        
         @media (prefers-color-scheme: dark) {{
             div.novel-text span.thought {{ color: #a0a0a0 !important; }}
             div.novel-text span.emphasis {{ color: #7986cb !important; }}
+            div.novel-text span.sound-effect {{ color: #b0bec5 !important; }}
         }}
 
         @media (max-width: 768px) {{
@@ -149,17 +157,16 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
         details[open] {{ background-color: transparent; border: none; }}
         summary {{ cursor: pointer; font-weight: bold; color: {text_color}; padding: 5px 10px; list-style: none; }}
         
-        /* [V80 FIX] HN/WNCS 여백 문제 해결을 위한 초기화 */
         div.novel-text .community-box *, 
-        div.novel-text .wncs-container * {{
+        div.novel-text .wncs-container *,
+        div.novel-text .lightboard-container * {{
             margin: 0 !important;
             padding: 0 !important;
-            line-height: 1.35 !important;
+            line-height: 1.45 !important;
             font-family: 'Nanum Gothic', sans-serif !important;
             font-size: inherit !important;
         }}
 
-        /* HN(커뮤니티) 스타일 */
         .community-box {{ background-color: {bg_color}; border: 1px solid {text_color}30; margin-top: 10px; font-size: {small_font_size}px !important; }}
         .comm-header {{ background-color: {bg_subtle}; padding: 8px 12px !important; border-bottom: 1px solid {text_color}30; font-weight: bold; margin-bottom: 5px !important; }}
         .comm-post {{ padding: 15px !important; border-bottom: 1px solid {text_color}20; }}
@@ -170,7 +177,6 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
         .comm-cmt-row {{ display: block !important; margin-bottom: 6px !important; border-bottom: 1px dashed {text_color}10; padding-bottom: 2px !important; }}
         .comm-cmt-user {{ font-weight: bold; margin-right: 6px !important; }}
         
-        /* WNCS 스타일 */
         .wncs-container {{ margin-top: 10px; font-size: {small_font_size}px !important; border-top: 2px solid {text_color}; }}
         .wncs-header {{ padding: 10px 0 !important; font-weight: bold; border-bottom: 1px solid {text_color}20; }}
         .wncs-author-note {{ background-color: {bg_subtle}; padding: 15px !important; margin: 10px 0 !important; border-radius: 8px; border: 1px solid {text_color}20; font-weight: bold; }}
@@ -179,22 +185,88 @@ def get_css(bg_color, text_color, font_family, font_size, line_height, margin_pc
         .wncs-user {{ font-weight: bold; margin-right: 8px !important; }}
         .wncs-reply {{ margin-left: 20px !important; padding: 8px 0 8px 10px !important; border-left: 3px solid {text_color}20; background-color: {bg_subtle}50; }}
         
-        /* 라이트보드 스타일 (V79 유지) */
+        /* [V0.95] 라이트보드(Lightboard) 스타일 - 예쁜 카드 디자인 */
         .lightboard-container {{ 
-            margin-top: 10px; 
-            margin-bottom: 10px;
+            margin-top: 15px; 
+            margin-bottom: 15px;
             background-color: transparent; 
             border: none;
             padding: 5px;
             font-size: {small_font_size}px !important; 
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
         }}
-        div.novel-text .lightboard-container * {{ margin: 0 !important; padding: 0 !important; line-height: 1.4 !important; font-family: 'Nanum Gothic', sans-serif !important; font-size: inherit !important; }}
-        .lb-post {{ display: block !important; background-color: {bg_subtle} !important; border: 1px solid {border_color} !important; border-radius: 8px !important; padding: 10px 12px !important; margin-bottom: 8px !important; box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important; }}
-        .lb-comment {{ display: block !important; background-color: transparent !important; border-left: 3px solid {accent_color} !important; padding: 4px 0px 4px 10px !important; margin-bottom: 4px !important; margin-left: 10px !important; }}
-        .lb-header {{ display: inline-block !important; width: 100% !important; border-bottom: 1px dashed {border_color} !important; padding-bottom: 4px !important; margin-bottom: 4px !important; opacity: 0.9; }}
-        .lb-author {{ font-weight: bold; color: {text_color}; float: left; }}
-        .lb-meta {{ font-size: 0.8em !important; opacity: 0.6; float: right; margin-top: 2px !important; }}
-        .lb-body {{ display: block !important; color: {text_color}; word-break: break-all; white-space: pre-wrap; opacity: 0.95; }}
+
+        /* 게시글 (Post) - 둥근 카드형 */
+        .lb-post {{
+            display: flex !important;
+            flex-direction: column !important;
+            background-color: {bg_subtle} !important;
+            border: 1px solid {border_color} !important;
+            border-radius: 12px !important;
+            padding: 12px 15px !important;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.03) !important;
+            transition: transform 0.2s ease;
+        }}
+        .lb-post:hover {{
+            transform: translateY(-1px); /* 호버 시 살짝 떠오름 */
+            box-shadow: 0 4px 12px rgba(0,0,0,0.06) !important;
+        }}
+        
+        /* 댓글 (Comment) - 깔끔한 대댓글 라인 */
+        .lb-comment {{
+            display: flex !important;
+            flex-direction: column !important;
+            background-color: transparent !important;
+            border-left: 3px solid {accent_color} !important;
+            padding: 6px 0px 6px 12px !important;
+            margin-left: 15px !important;
+            margin-top: 2px !important;
+        }}
+        
+        /* 헤더 (작성자 + 메타) */
+        .lb-header {{
+            display: flex !important;
+            justify-content: space-between !important;
+            align-items: center !important;
+            border-bottom: 1px dashed {text_color}20 !important;
+            padding-bottom: 6px !important;
+            margin-bottom: 6px !important;
+            width: 100% !important;
+        }}
+        
+        .lb-author {{
+            font-weight: 700 !important;
+            color: {text_color} !important;
+            font-size: 1.05em !important;
+            display: flex !important;
+            align-items: center !important;
+        }}
+        /* 작성자 앞 포인트 바 */
+        .lb-author::before {{
+            content: '' !important;
+            display: inline-block !important;
+            width: 4px !important;
+            height: 12px !important;
+            background-color: {accent_color} !important;
+            border-radius: 2px !important;
+            margin-right: 8px !important;
+        }}
+        
+        .lb-meta {{
+            font-size: 0.85em !important;
+            color: {text_color}80 !important;
+            letter-spacing: -0.3px !important;
+        }}
+        
+        /* 본문 */
+        .lb-body {{
+            display: block !important;
+            color: {text_color}E0 !important;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }}
         
         .novel-img-placeholder {{ display: block; margin: 20px auto; padding: 10px; border: 1px dashed {border_color}; border-radius: 4px; text-align: center; color: {text_color}; opacity: 0.8; font-family: {font_family} !important; font-size: {int(font_size * 0.8)}px; }}
         .chapter-divider {{ border: none; border-top: 1px solid {border_color}; margin: 5px 0; width: 100%; height: 1px; }}

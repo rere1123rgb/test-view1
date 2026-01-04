@@ -3,6 +3,7 @@ import json
 import streamlit as st
 import uuid
 import unicodedata
+import os
 
 # [GLOBAL] 정규식
 RE_HEADER_RESPONSE = re.compile(r'^#\s+응답.*$', re.MULTILINE)
@@ -14,7 +15,16 @@ RE_ENGLISH_CHAR = re.compile(r'[a-zA-Z]')
 RE_STATUS_DATE = re.compile(r'Date\s*:\s*([^|\]]+)', re.IGNORECASE)
 RE_STATUS_TIME = re.compile(r'Time\s*:\s*([^|\]]+)', re.IGNORECASE)
 
-# 허용할 안전한 태그 목록 (Whitelist)
+# 메타데이터 제거용 정규식 (〔...〕)
+RE_BRACKET_METADATA = re.compile(r'〔.*?〕')
+
+# 효과음 정규식
+RE_SOUND_EFFECT = re.compile(r'§(.*?)§')
+
+# 한국어 감지 정규식
+RE_KOREAN = re.compile(r'[ㄱ-ㅎㅏ-ㅣ가-힣]')
+
+# 허용할 안전한 태그 목록
 ALLOWED_TAGS = {
     'div', 'span', 'p', 'br', 'hr', 'img', 'details', 'summary',
     'b', 'i', 'strong', 'em', 'u', 'mark', 'small', 'sub', 'sup', 'del', 'ins'
@@ -25,18 +35,15 @@ RE_TAG_PATTERN = re.compile(r'<(/?[^\s>]+)([^>]*)>')
 
 RE_SYS_MSG = re.compile(r'^-\s*System Message:\s*(.*)', re.MULTILINE)
 RE_SYS_MSG_BRACE = re.compile(r'-\s*\{System\s+Message:\s*([\s\S]*?)\}', re.MULTILINE)
-
 RE_QUOTE_DOUBLE = re.compile(r'"([^"]*)"')
 RE_QUOTE_SINGLE = re.compile(r"'([^']*)'") 
-
 RE_PREV_SUMMARY = re.compile(r'▽.*?△', re.DOTALL)
-
 RE_LIGHTBOARD = re.compile(r'<lightboard-comments>(.*?)</lightboard-comments>', re.DOTALL | re.IGNORECASE)
 
-# 텍스트 정화 강화
 def sanitize_text(text):
     if not text: return ""
     text = unicodedata.normalize('NFC', text)
+    # 제어 문자 제거 (줄바꿈, 탭 제외)
     return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]', '', text)
 
 def parse_nested_block(text, start_marker, open_char, close_char, repl_func):
@@ -171,14 +178,41 @@ def convert_wncs_content(raw_content):
 
 def format_novel_content(text):
     if not text: return ""
+    
+    # [V0.99] 태그 즉결 처형 (화면 표시 보장을 위해 문자열 분할 기법 사용)
+    # 실제 실행 시에는 합쳐져서 "" 가 되어 정확히 삭제됩니다.
+    tag_start = "<!" + "-- Platform managed do not generate --" + ">"
+    tag_end = "<!" + "-- End platform managed --" + ">"
+    
+    exact_targets = [
+        tag_start,
+        tag_end,
+        "<Thoughts>",
+        "</Thoughts>"
+    ]
+    
+    for target in exact_targets:
+        text = text.replace(target, "")
+    
+    # ban_word.txt 보조 로드
+    try:
+        if os.path.exists("ban_word.txt"):
+            with open("ban_word.txt", "r", encoding="utf-8") as f:
+                content = f.read()
+                file_bans = [word.strip() for word in content.split(',') if word.strip()]
+                for s in file_bans:
+                    text = text.replace(s, "")
+    except: pass
+
+    # 메타데이터 〔...〕 삭제
+    text = RE_BRACKET_METADATA.sub('', text)
+    
+    # 정화
     text = sanitize_text(text)
     
-    # [V86] 불필요한 메타데이터/더미 문자열 삭제 (최우선 처리)
-    text = text.replace('<Thoughts>', '')
-    text = text.replace('</Thoughts>', '')
-    text = text.replace('<!-- End platform managed -->','')
-    text = text.replace('<!-- Platform managed do not generate -->', '')
-    
+    # 효과음 처리
+    text = RE_SOUND_EFFECT.sub(r'<span class="sound-effect">\1</span>', text)
+
     text = text.strip()
     text = text.replace('[Status Interface]', '')
     text = RE_HEADER_RESPONSE.sub('', text)
@@ -204,11 +238,11 @@ def format_novel_content(text):
     
     text = re.sub(r'<img[^>]+>', repl_img_tag_safe, text)
 
-    # 태그 안전성 검사 (Whitelist)
     def check_and_protect_tag(match):
         full_tag = match.group(0)
         tag_name = match.group(1).replace('/', '').lower()
         if tag_name not in ALLOWED_TAGS:
+            if 'sound-effect' in full_tag: return protect_content(full_tag)
             safe_text = full_tag.replace('<', '&lt;').replace('>', '&gt;')
             return protect_content(safe_text)
         return protect_content(full_tag)
@@ -241,22 +275,32 @@ def format_novel_content(text):
         return protect_content(f"<div class='system-msg'>🔔 System: {content}</div>")
     text = RE_SYS_MSG.sub(repl_sys_msg_wrapper, text)
 
-    # 영어 문장 필터링 (보호된 블록 제외)
+    # [V0.99] 스마트 필터링 (한글 방패 + 영어 추론 삭제)
     lines = text.split('\n')
     filtered_lines = []
+    
     for line in lines:
         stripped = line.strip()
         if not stripped:
             filtered_lines.append(line)
             continue
         
+        # 1. 보호된 블록(이미지, 라이트보드 등)은 무조건 통과
         if stripped.startswith('__KVIEWER_PROTECTED_'):
             filtered_lines.append(line)
             continue
         
-        eng_count = sum(1 for c in line if 65 <= ord(c) <= 90 or 97 <= ord(c) <= 122)
-        if len(line) > 0 and (eng_count / len(line)) >= 0.3:
-             continue 
+        # 2. [한글 방패] 한글이 한 글자라도 있으면 절대 삭제하지 않음
+        if RE_KOREAN.search(line):
+            filtered_lines.append(line)
+            continue
+        
+        # 3. [영어 추론 타격] 한글이 없는 문장 중, 영어 비율이 40% 넘으면 삭제
+        total_len = len(line)
+        if total_len > 0:
+            eng_count = sum(1 for c in line if 65 <= ord(c) <= 90 or 97 <= ord(c) <= 122)
+            if (eng_count / total_len) >= 0.4:
+                continue 
         
         filtered_lines.append(line)
     text = '\n'.join(filtered_lines)

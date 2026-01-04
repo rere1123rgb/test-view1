@@ -53,6 +53,10 @@ def save_config():
     with open(CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(current_full_config, f, indent=4, ensure_ascii=False)
 
+def clean_file_content(text):
+    if not text: return ""
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f\ufffd]', '', text)
+
 st.set_page_config(page_title="케이뷰어 (K-Viewer)", page_icon="📖", layout="wide")
 
 screen_width = None
@@ -278,7 +282,6 @@ def main():
     if target_file:
         display_name = os.path.basename(target_file) if isinstance(target_file, str) else target_file.name
         
-        # [V85] errors='replace'로 복구 (사용자 요청: 문자 삭제하지 말 것)
         if isinstance(target_file, str):
             with open(target_file, 'r', encoding='utf-8', errors='replace') as f:
                 file_content = f.read()
@@ -322,7 +325,7 @@ def main():
     else:
         st.markdown(f"""
         <div style='text-align:center; padding-top: 150px; opacity: 0.6; color: {st.session_state.text_color};'>
-            <h2>📂 케이뷰어 V85</h2>
+            <h2>📂 케이뷰어 V0.95</h2>
             <p>왼쪽 사이드바에서 책을 선택해주세요.</p>
         </div>
         """, unsafe_allow_html=True)
